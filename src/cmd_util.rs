@@ -1,11 +1,13 @@
 
 use crate::cli_util::ResultExt;
 use std::{
+    io::{Read, Write, BufRead, BufReader, BufWrite},
     path::Path,
     collections::HashMap,
-    process::Command,
+    process::{Command, Stdio, ChildStdout},
     ffi::OsStr,
     mem::replace,
+    thread::{self, JoinHandle},
 };
 use failure::{Error, format_err};
 use regex::Regex;
@@ -49,11 +51,15 @@ fn smart_split<S: AsRef<str>>(input: S) -> Vec<String> {
     parts
 }
 
-pub fn exec_command<P, C>(
-    workdir: P, cmd: C) -> Result<(), Error>
+pub fn exec_command<I, P, C, O, T>(
+    stdin_content: I, workdir: P, cmd: C, stdout_reader: O)
+    -> JoinHandle<T>
 where 
+    I: Read,
     P: AsRef<Path>, 
     C: AsRef<str>, 
+    O: FnOnce(ChildStdout) + Send + 'static,
+    T: Send + 'static,
 {
     // parse command
     let evar_pat = r#"^(?P<key>[^=]+)=(?P<val>[^=]+)$"#;
@@ -80,17 +86,60 @@ where
         }
     }
     
-    // execute
+    // spawn subprocess
     let program = program
         .ok_or_else(|| format_err!(
             "cannot find program part of command"))
         .ekill();
-
     let mut sys_cmd = Command::new(program);
     sys_cmd
         .envs(&vars)
         .args(&args)
-        .current_dir(&workdir);
+        .stdout(Stdio::piped())
+        .stdin(Stdio::piped())
+        .current_dir(&workdir);    
+    let sys_cmd_str = format!("{:?}", sys_cmd);
+    printbl!("[DEBUG] ", "executing command:\n{}", sys_cmd_str); 
+    let subproc = sys_cmd.spawn().ekill();
+    let subproc_in = subproc.stdin.take().unwrap();
+    let subproc_out = subproc.stdout.take().unwrap();
+    
+    let sys_cmd_str0 = sys_cmd_str;
+    
+    // spawn thread to pipe in the stdin content
+    thread::Builder::new()
+        .name("thread to pipe input into {}", sys_cmd_str)
+        .spawn(move || {
+            let mut pipe_from = BufReader::new(stdin_content);
+            let mut pipe_into = BufWriter::new(subproc_in);
+            
+            loop {
+                let chunk = pipe_from.fill_buf()
+                    .map_err(|e| format!("error reading from stdin_content:\n\
+                        {}\
+                        to subprocess:\
+                        {}", e, sys_cmd_str0))
+                    .ekill();
+                if chunk.len() == 0 {
+                    // Quoting [the docs](https://doc.rust-lang.org/std/io/trait.BufRead.html#tymethod.fill_buf)
+                    //
+                    // > An empty buffer returned indicates that the stream has reached EOF.
+                    break;
+                }
+                let released: usize = match pipe_into.write(chunk) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        printbl!("[DIAGNOSTIC] ", "error writing into stdin:\n\
+                            {}\n\
+                            to subprocess:\n\
+                            {}", e, sys_cmd_str0);
+                        break;
+                    },
+                };
+                pipe_from.consume(released);
+            }
+        });
+        
     printbl!("[INFO] ", "executing command:\n{:?}", sys_cmd);
     let status = sys_cmd.status().map_err(Error::from)?;
     if status.success() {
