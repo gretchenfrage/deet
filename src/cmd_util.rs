@@ -86,12 +86,13 @@ where
             "cannot find program part of command"))
         .ekill();
 
-    let status = Command::new(program)
+    let mut sys_cmd = Command::new(program);
+    sys_cmd
         .envs(&vars)
         .args(&args)
-        .current_dir(&workdir)
-        .status()
-        .map_err(Error::from)?;
+        .current_dir(&workdir);
+    printbl!("[INFO] ", "executing command:\n{:?}", sys_cmd);
+    let status = sys_cmd.status().map_err(Error::from)?;
     if status.success() {
         Ok(())
     } else {

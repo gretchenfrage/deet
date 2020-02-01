@@ -8,11 +8,11 @@ use rand::{
 
 /// Utility for random ids.
 ///
-/// `u16` that Displays as hex. 
+/// Integer that Displays as hex. 
 ///
 /// Generatable with `rand`.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct Hex(pub u16);
+pub struct Hex(pub u32);
 
 impl Distribution<Hex> for Standard {
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> Hex {
