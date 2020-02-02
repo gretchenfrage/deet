@@ -22,6 +22,6 @@ impl Distribution<Hex> for Standard {
 
 impl Display for Hex {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        Display::fmt(&format_args!("{:x}", self.0), f)
+        Display::fmt(&format_args!("{:08x}", self.0), f)
     }
 }
