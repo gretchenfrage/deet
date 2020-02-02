@@ -40,13 +40,13 @@ fn check<P: AsRef<OsStr>>(package: P) {
     printbl!("- ", "For package at:\n{:?}", pckg);
     
     let pckg_repo = exec!(
-        [&pckg, r#" git rev-parse --show-toplevel "#] 
+        [&pckg, "git rev-parse --show-toplevel"] 
         | (preadln)
     );
     printbl!("- ", "Using the repo at:\n{:?}", pckg_repo);
     
     let pckg_branch = exec!(
-        [&pckg, r#" git rev-parse --abbrev-ref HEAD "#]
+        [&pckg, "git rev-parse --abbrev-ref HEAD"]
         | (preadln)
     );
     printbl!("- ", "Which is in branch {:?}", pckg_branch);
@@ -59,11 +59,14 @@ fn check<P: AsRef<OsStr>>(package: P) {
     printbl!("- ", "Creating scratch repo in:\n{:?}", srp);
     
     mkdir(&srp).ekill();
-    exec!([&srp, r#" git init "#]);
-    exec!([&srp, r#" git remote add local {:?} "#, pckg_repo]);
-    exec!([&srp, r#" git fetch local "#]);
-    exec!([&srp, r#" git checkout local/{} "#, pckg_branch]);
+    exec!([&srp, "git init"]);
+    exec!([&srp, "git remote add local {:?}", pckg_repo]);
+    exec!([&srp, "git fetch local"]);
+    exec!([&srp, "git checkout local/{}", pckg_branch]);
+    exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
+    
     exec!([&srp, r#" ls "#]);
+    exec!([&srp, r#" git status "#]);
 }
 
 fn main() {

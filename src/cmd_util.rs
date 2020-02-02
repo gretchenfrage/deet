@@ -40,40 +40,52 @@ macro_rules! exec {
         last=$last:ident,
         $curr:expr,
         | ($f:ident) $($t:tt)*
-    ))=>{
+    ))=>{{
+        let curr = exec!(@outjoin(
+            last=$last,
+            $curr
+        ));
         exec!(@recurse(
             last=fnc,
-            $f($curr),
+            $f(curr),
             $($t)*
         ))
-    };
+    }};
     // pipe through closure
     (@recurse(
         last=$last:ident,
         $curr:expr,
         | ($f:expr) $($t:tt)*
-    ))=>{
+    ))=>{{
+        let curr = exec!(@outjoin(
+            last=$last,
+            $curr
+        ));
         exec!(@recurse(
             last=fnc,
-            ($f)($curr),
+            ($f)(curr),
             $($t)*
         ))
-    };
+    }};
     // pipe through command
     (@recurse(
         last=$last:ident,
         $curr:expr,
-        | [$($c:tt)*]
-    ))=>{
+        | [$($c:tt)*] $($t:tt)*
+    ))=>{{
+        let (subproc, subproc_stdout) = $curr;
+        std::thread::spawn(move || {
+            $crate::cmd_util::pjoin(subproc).ekill();
+        });
         exec!(@recurse(
             last=cmd,
             exec!(@cmd(
-                $curr,
+                subproc_stdout,
                 $($c)*
             )),
             $($t)*    
         ))
-    };
+    }};
     
     // finish with function(/closure)
     (@recurse(
@@ -86,9 +98,26 @@ macro_rules! exec {
         last=cmd,
         $curr:expr,
     ))=>{{
-        let tuple = $curr;
-        $crate::cmd_util::printout(tuple.1);
-        $crate::cmd_util::pjoin(tuple.0).ekill();
+        //$crate::cmd_util::printout($curr);
+        
+        let (subproc, subproc_stdout) = $curr;
+        $crate::cmd_util::printout(subproc_stdout);
+        $crate::cmd_util::pjoin(subproc).ekill();
+        
+    }};
+    
+    (@outjoin(
+        last=fnc,
+        $curr:expr
+    ))=>{ $curr };
+    
+    (@outjoin(
+        last=cmd,
+        $curr:expr
+    ))=>{{
+        let (subproc, subproc_stdout) = $curr;
+        $crate::cmd_util::pjoin(subproc).ekill();
+        subproc_stdout
     }};
     
     // cmd syntax into expr
@@ -157,11 +186,8 @@ where
         .ekill();
 }
 
-/// Read a line from a process's output, or pkill.
-pub fn preadln(
-    (child, stdout): (Child, ChildStdout)
-) -> String {
-    pjoin(child).ekill();
+/// Read a line from a process's output.
+pub fn preadln(stdout: ChildStdout) -> String {
     BufReader::new(stdout).lines().next()
         .ok_or_else(|| format_err!("subprocess did not \
             print anything"))
