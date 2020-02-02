@@ -4,6 +4,7 @@ extern crate failure;
 extern crate unicode_segmentation;
 extern crate rand;
 extern crate regex;
+extern crate cargo;
 
 /// Helpers for cli to the tool.
 #[macro_use] pub mod cli_util;
@@ -22,7 +23,7 @@ use crate::{
     },
 };
 use std::{
-    path::PathBuf,
+    path::{PathBuf, Path},
     fs::{
         canonicalize,
         create_dir as mkdir,
@@ -35,6 +36,8 @@ use rand::prelude::*;
 fn check<P: AsRef<OsStr>>(package: P) {
     printbl!("- ", "Executing DEET check");
 
+    // recreate in a new git repo
+    
     let pckg = PathBuf::from(package.as_ref());
     let pckg = canonicalize(&pckg).ekill();
     printbl!("- ", "For package at:\n{:?}", pckg);
@@ -65,8 +68,39 @@ fn check<P: AsRef<OsStr>>(package: P) {
     exec!([&srp, "git checkout local/{}", pckg_branch]);
     exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
     
-    exec!([&srp, r#" ls "#]);
-    exec!([&srp, r#" git status "#]);
+    use cargo::{
+        util::config::Config,
+        core::Workspace,
+    };
+    use failure::{Error, format_err};
+    
+    fn path_rebase<P0, P1, P2>(full: P0, old_base: P1, new_base: P2) -> Result<PathBuf, Error> 
+    where
+        P0: AsRef<Path>,
+        P1: AsRef<Path>,
+        P2: AsRef<Path>,
+    {
+        full.as_ref().strip_prefix(old_base.as_ref())
+            .map_err(|e| format_err!(
+                "error rebasing paths\n \
+                path={:?}\nfrom={:?}\nto={:?}\n\
+                error:\n{:#?}", 
+                full.as_ref(), 
+                old_base.as_ref(), 
+                new_base.as_ref(), 
+                e))
+            .map(|suffix| new_base.as_ref().join(suffix))
+    }
+    
+    let cargo_cfg = Config::default().ekill();
+    let manifest = path_rebase(&pckg, &pckg_repo, &srp)
+        .ekill()
+        .join("Cargo.toml");
+    let workspace = Workspace::new(&manifest, &cargo_cfg)
+        .ekill();
+    dbg!(&workspace);
+    
+    
 }
 
 fn main() {
