@@ -17,6 +17,9 @@ use crate::{
         parse_var,
         ResultExt,
     },
+    cmd_util::{
+        preadln,
+    },
 };
 use std::{
     path::PathBuf,
@@ -30,11 +33,23 @@ use rand::prelude::*;
 
 /// Check subcommand.
 fn check<P: AsRef<OsStr>>(package: P) {
-    printbl!("- ", "Executing deet check");
+    printbl!("- ", "Executing DEET check");
 
     let pckg = PathBuf::from(package.as_ref());
     let pckg = canonicalize(&pckg).ekill();
-    printbl!("- ", "For package at {:?}", pckg);
+    printbl!("- ", "For package at:\n{:?}", pckg);
+    
+    let pckg_repo = exec!(
+        [&pckg, r#" git rev-parse --show-toplevel "#] 
+        | (preadln)
+    );
+    printbl!("- ", "Using the repo at:\n{:?}", pckg_repo);
+    
+    let pckg_branch = exec!(
+        [&pckg, r#" git rev-parse --abbrev-ref HEAD "#]
+        | (preadln)
+    );
+    printbl!("- ", "Which is in branch {:?}", pckg_branch);
 
     let tmp: PathBuf = parse_var("DEET_TMP_DIR").ekill();
     let tmp = canonicalize(&tmp).ekill();
@@ -44,11 +59,11 @@ fn check<P: AsRef<OsStr>>(package: P) {
     printbl!("- ", "Creating scratch repo in:\n{:?}", srp);
     
     mkdir(&srp).ekill();
-    exec!(&srp, r#" git init "#);
-    exec!(&srp, r#" git remote add local {:?} "#, pckg);
-    exec!(&srp, r#" git fetch local "#);
-    exec!(&srp, r#" git checkout local/master "#);
-    exec!(&srp, r#" ls "#);
+    exec!([&srp, r#" git init "#]);
+    exec!([&srp, r#" git remote add local {:?} "#, pckg_repo]);
+    exec!([&srp, r#" git fetch local "#]);
+    exec!([&srp, r#" git checkout local/{} "#, pckg_branch]);
+    exec!([&srp, r#" ls "#]);
 }
 
 fn main() {

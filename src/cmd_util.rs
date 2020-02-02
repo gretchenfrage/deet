@@ -1,24 +1,110 @@
 
 use crate::cli_util::ResultExt;
 use std::{
-    io::{Read, Write, BufRead, BufReader, BufWrite},
+    io::{Read, Write, BufRead, BufReader, BufWriter},
     path::Path,
     collections::HashMap,
-    process::{Command, Stdio, ChildStdout},
+    process::{Command, Child, Stdio, ChildStdout},
     ffi::OsStr,
     mem::replace,
-    thread::{self, JoinHandle},
+    thread,
 };
 use failure::{Error, format_err};
 use regex::Regex;
 
-/// Run a subcommand
+/// Subprocesss DSL.
+macro_rules! exec {
+    // starting with command
+    ( [$($c:tt)*] $($t:tt)* )=>{
+        exec!(@recurse(
+            last=cmd,
+            // feed input with an empty cursor
+            exec!(@cmd(
+                std::io::Cursor::new([]),
+                $($c)*
+            )),
+            $($t)*
+        ))
+    };
+    // starting with value
+    ( ($v:expr) $($t:tt)* )=>{
+        exec!(@recurse(
+            last=fnc,
+            $v,
+            $($t)*
+        ))
+    };
+    
+    // pipe through function
+    (@recurse(
+        last=$last:ident,
+        $curr:expr,
+        | ($f:ident) $($t:tt)*
+    ))=>{
+        exec!(@recurse(
+            last=fnc,
+            $f($curr),
+            $($t)*
+        ))
+    };
+    // pipe through closure
+    (@recurse(
+        last=$last:ident,
+        $curr:expr,
+        | ($f:expr) $($t:tt)*
+    ))=>{
+        exec!(@recurse(
+            last=fnc,
+            ($f)($curr),
+            $($t)*
+        ))
+    };
+    // pipe through command
+    (@recurse(
+        last=$last:ident,
+        $curr:expr,
+        | [$($c:tt)*]
+    ))=>{
+        exec!(@recurse(
+            last=cmd,
+            exec!(@cmd(
+                $curr,
+                $($c)*
+            )),
+            $($t)*    
+        ))
+    };
+    
+    // finish with function(/closure)
+    (@recurse(
+        last=fnc,
+        $curr:expr,
+    ))=>{ $curr };
+    
+    // finish with command
+    (@recurse(
+        last=cmd,
+        $curr:expr,
+    ))=>{{
+        let tuple = $curr;
+        $crate::cmd_util::printout(tuple.1);
+        $crate::cmd_util::pjoin(tuple.0).ekill();
+    }};
+    
+    // cmd syntax into expr
+    (@cmd($input:expr, $workdir:expr, $($t:tt)*))=>{
+        $crate::cmd_util::exec_command(
+            $input, $workdir, format!($($t)*))
+    };
+}
+/*
 macro_rules! exec {
     ($workdir:expr, $($t:tt)*)=>{
         $crate::cmd_util::exec_command(
             $workdir, format!($($t)*)).ekill();
     };
 }
+*/
 
 /// Split a string into words, with awareness of quotes 
 /// and escaping.
@@ -51,15 +137,54 @@ fn smart_split<S: AsRef<str>>(input: S) -> Vec<String> {
     parts
 }
 
-pub fn exec_command<I, P, C, O, T>(
-    stdin_content: I, workdir: P, cmd: C, stdout_reader: O)
-    -> JoinHandle<T>
+/// Spawn a thread to delegate from a `Read` to our
+/// `stdout`.
+pub fn printout<R>(read: R)
+where
+    R: Read + Send + 'static {
+    
+    thread::Builder::new()
+        .name("cmd_util::printout delegate thread".into())
+        .spawn(move || {
+            let read = BufReader::new(read);
+            for line in read.lines() {
+                match line {
+                    Ok(l) => println!("{}", l),
+                    Err(e) => println!("{:?}", e),
+                };
+            }
+        })
+        .ekill();
+}
+
+/// Read a line from a process's output, or pkill.
+pub fn preadln(
+    (child, stdout): (Child, ChildStdout)
+) -> String {
+    pjoin(child).ekill();
+    BufReader::new(stdout).lines().next()
+        .ok_or_else(|| format_err!("subprocess did not \
+            print anything"))
+        .ekill().ekill()
+}
+
+/// Join a process, return its exit code.
+pub fn pjoin(mut child: Child) -> Result<(), Error> {
+    let status = child.wait().map_err(Error::from)?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format_err!("exit code {:?}", status.code()))
+    }
+}
+
+pub fn exec_command<I, P, C>(
+    input: I, workdir: P, cmd: C)
+    -> (Child, ChildStdout)
 where 
-    I: Read,
+    I: Read + Send + 'static,
     P: AsRef<Path>, 
-    C: AsRef<str>, 
-    O: FnOnce(ChildStdout) + Send + 'static,
-    T: Send + 'static,
+    C: AsRef<str> 
 {
     // parse command
     let evar_pat = r#"^(?P<key>[^=]+)=(?P<val>[^=]+)$"#;
@@ -100,17 +225,16 @@ where
         .current_dir(&workdir);    
     let sys_cmd_str = format!("{:?}", sys_cmd);
     printbl!("[DEBUG] ", "executing command:\n{}", sys_cmd_str); 
-    let subproc = sys_cmd.spawn().ekill();
+    let mut subproc = sys_cmd.spawn().ekill();
     let subproc_in = subproc.stdin.take().unwrap();
     let subproc_out = subproc.stdout.take().unwrap();
     
-    let sys_cmd_str0 = sys_cmd_str;
-    
     // spawn thread to pipe in the stdin content
     thread::Builder::new()
-        .name("thread to pipe input into {}", sys_cmd_str)
+        .name(format!("thread to pipe input into {}",
+            sys_cmd_str))
         .spawn(move || {
-            let mut pipe_from = BufReader::new(stdin_content);
+            let mut pipe_from = BufReader::new(input);
             let mut pipe_into = BufWriter::new(subproc_in);
             
             loop {
@@ -118,7 +242,7 @@ where
                     .map_err(|e| format!("error reading from stdin_content:\n\
                         {}\
                         to subprocess:\
-                        {}", e, sys_cmd_str0))
+                        {}", e, sys_cmd_str))
                     .ekill();
                 if chunk.len() == 0 {
                     // Quoting [the docs](https://doc.rust-lang.org/std/io/trait.BufRead.html#tymethod.fill_buf)
@@ -132,20 +256,16 @@ where
                         printbl!("[DIAGNOSTIC] ", "error writing into stdin:\n\
                             {}\n\
                             to subprocess:\n\
-                            {}", e, sys_cmd_str0);
+                            {}", e, sys_cmd_str);
                         break;
                     },
                 };
                 pipe_from.consume(released);
             }
-        });
-        
-    printbl!("[INFO] ", "executing command:\n{:?}", sys_cmd);
-    let status = sys_cmd.status().map_err(Error::from)?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format_err!("exit code {:?}", status.code()))
-    }
-    
+        })
+        .ekill();
+      
+    // exit
+    (subproc, subproc_out)
 }
+
