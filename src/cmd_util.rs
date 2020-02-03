@@ -176,11 +176,23 @@ where
         .name("cmd_util::printout delegate thread".into())
         .spawn(move || {
             let read = BufReader::new(read);
-            for line in read.lines() {
+            for line in read
+                .lines()
+                .map(|item| match item {
+                    Ok(s) => s,
+                    Err(e) => format!("{:?}", e),
+                })
+                .flat_map(|s| s.lines()
+                    .map(String::from)
+                    .collect::<Vec<_>>())
+            {
+                println!("| {}", line);
+                /*
                 match line {
-                    Ok(l) => println!("{}", l),
-                    Err(e) => println!("{:?}", e),
+                    Ok(l) => println!("| {}", l),
+                    Err(e) => println!("| {:?}", e),
                 };
+                */
             }
         })
         .ekill();
@@ -248,12 +260,15 @@ where
         .args(&args)
         .stdout(Stdio::piped())
         .stdin(Stdio::piped())
+        .stderr(Stdio::piped())
         .current_dir(&workdir);    
     let sys_cmd_str = format!("{:?}", sys_cmd);
-    printbl!("[DEBUG] ", "executing command:\n{}", sys_cmd_str); 
+    //printbl!("[DEBUG] ", "executing command:\n{}", sys_cmd_str); 
     let mut subproc = sys_cmd.spawn().ekill();
     let subproc_in = subproc.stdin.take().unwrap();
     let subproc_out = subproc.stdout.take().unwrap();
+    
+    printout(subproc.stderr.take().unwrap());
     
     // spawn thread to pipe in the stdin content
     thread::Builder::new()

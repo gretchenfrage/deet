@@ -1,16 +1,16 @@
 
 extern crate failure;
-//extern crate cmd_lib;
 extern crate unicode_segmentation;
 extern crate rand;
 extern crate regex;
-extern crate cargo;
+extern crate toml_edit;
 
 /// Helpers for cli to the tool.
 #[macro_use] pub mod cli_util;
 /// Helpers for running subcommands.
 #[macro_use] pub mod cmd_util;
 pub mod hex;
+pub mod manifest;
 
 use crate::{
     hex::Hex,
@@ -21,6 +21,7 @@ use crate::{
     cmd_util::{
         preadln,
     },
+    manifest::{ManifestFile, DepSource},
 };
 use std::{
     path::{PathBuf, Path},
@@ -67,12 +68,17 @@ fn check<P: AsRef<OsStr>>(package: P) {
     exec!([&srp, "git fetch local"]);
     exec!([&srp, "git checkout local/{}", pckg_branch]);
     exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
+
+//    exec!([".", "sleep 10"] | [".", "sleep 10"]);
     
+    /*
     use cargo::{
         util::config::Config,
         core::Workspace,
     };
+    */
     use failure::{Error, format_err};
+    use std::fs::read_to_string;
     
     fn path_rebase<P0, P1, P2>(full: P0, old_base: P1, new_base: P2) -> Result<PathBuf, Error> 
     where
@@ -92,13 +98,43 @@ fn check<P: AsRef<OsStr>>(package: P) {
             .map(|suffix| new_base.as_ref().join(suffix))
     }
     
+    let package_path = path_rebase(&pckg, &pckg_repo, &srp)
+        .ekill();
+    let manifest_path = package_path.join("Cargo.toml");
+    printbl!("[DEBUG] ", "manifest path at:\n{:?}", manifest_path);
+        
+    let mut manifest_file = ManifestFile::new(&manifest_path).ekill();
+    for dep in manifest_file.deps().ekill() {
+        let local_path = match dep.source() {
+            DepSource::Local { path } => path,
+            _ => continue,
+        };
+        let mut local_path = PathBuf::from(local_path);
+        if local_path.is_relative() {
+            local_path = package_path.join(local_path);
+            local_path = canonicalize(local_path).ekill();
+        }
+        
+        //let local_path = canonicalize(local_path).ekill();
+        println!("LOCAL PATH: {:?}", local_path);
+    }
+        
+    /*
+    use toml_edit as toml;
+    
+    let mut manifest: toml::Document = read_to_string(&manifest_path).ekill()
+        .parse().ekill();
+    dbg!(&manifest);
+    */
+    /*
     let cargo_cfg = Config::default().ekill();
-    let manifest = path_rebase(&pckg, &pckg_repo, &srp)
+    let manifest_path = path_rebase(&pckg, &pckg_repo, &srp)
         .ekill()
         .join("Cargo.toml");
     let workspace = Workspace::new(&manifest, &cargo_cfg)
         .ekill();
     dbg!(&workspace);
+    */
     
     
 }
