@@ -24,7 +24,6 @@ impl ManifestFile {
     where
         P: AsRef<Path>
     {
-        println!("read to string: {:?}", path.as_ref());
         let toml = read_to_string(&path)
             .map_err(Error::from)?
             .parse::<Document>()
@@ -224,88 +223,5 @@ impl<'a> Dep<'a> {
         };
         
         *entry = replacement.into();
-        
-        /*
-        let entry = &mut toml["dependencies"][&self.key];
-        let entry2 = entry.as_str()
-            .map(|version| Value::from_iter(vec![
-                (
-                    Key::from_str("version").unwrap(),
-                    Value::from(version),
-                )
-            ]))
-            .or_else(|| )
-        */
-        /*
-        
-        let value = &mut toml["dependencies"][&self.key];
-        if value.is_str() {
-            *value = toml::InlineTable::default().into();
-        }
-        
-        if value.value() {
-            let table = entry.as_table_mut().unwrap();
-            
-            table.remove("path");
-            table.remove("version");
-            
-            match source2 {
-                DepSource::Crates { version } => {
-                    table.insert("version", &version)
-                    table["version"] = 
-                }
-            }
-        } else {
-            let table = value.as_value_mut().unwrap()
-                .as_inline_table_mut().unwrap();
-                
-            table.remove("path");
-            table.remove("version");
-        }
-        */
     }
 }
-
-/*
-pub struct ManifestEditor {
-    manifest: Manifest,
-}
-
-impl ManifestEditor {
-    pub fn from_manifest<P: AsRef<Path>>(path: P)
-        -> Result<Self, Error>
-    {
-        Manifest::open(&Some(path.as_ref().to_owned()))
-            .map_err(Error::from)
-            .map(|manifest| ManifestEditor { manifest })
-    }
-    
-    pub fn deps<'s>(&'s mut self) 
-        -> impl Iterator<Item=Dep<'s>> + 's 
-    {
-        self.manifest.get_sections().into_iter()
-            .flat_map(|(table_path, table)| {
-                table.as_table_like()
-                    .expect("unexpected non-table");
-                    .iter()
-                    .flat_map(|(name, toml_item)| {
-                        let dep_name = toml_item
-                            .as_table_like()
-                            .and_then(|t| 
-                                t.get("package"));
-                            .and_then(|p|
-                                p.as_str());
-                        
-                    });
-            })
-    }
-}
-
-pub struct Dep<'a> {
-    editor: &'a mut ManifestEditor,
-    
-    table_path: (),
-    name: (),
-    dependency: (),
-}
-*/

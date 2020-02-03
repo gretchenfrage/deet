@@ -68,15 +68,7 @@ fn check<P: AsRef<OsStr>>(package: P) {
     exec!([&srp, "git fetch local"]);
     exec!([&srp, "git checkout local/{}", pckg_branch]);
     exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
-
-//    exec!([".", "sleep 10"] | [".", "sleep 10"]);
     
-    /*
-    use cargo::{
-        util::config::Config,
-        core::Workspace,
-    };
-    */
     use failure::{Error, format_err};
     use std::fs::read_to_string;
     
@@ -121,29 +113,10 @@ fn check<P: AsRef<OsStr>>(package: P) {
             version: version.to_string()
         });
         
-        //let local_path = canonicalize(local_path).ekill();
         println!("LOCAL PATH: {:?}", local_path);
     }
     manifest_file.save().ekill();
-        
-    /*
-    use toml_edit as toml;
-    
-    let mut manifest: toml::Document = read_to_string(&manifest_path).ekill()
-        .parse().ekill();
-    dbg!(&manifest);
-    */
-    /*
-    let cargo_cfg = Config::default().ekill();
-    let manifest_path = path_rebase(&pckg, &pckg_repo, &srp)
-        .ekill()
-        .join("Cargo.toml");
-    let workspace = Workspace::new(&manifest, &cargo_cfg)
-        .ekill();
-    dbg!(&workspace);
-    */
-    
-    
+
 }
 
 fn main() {
