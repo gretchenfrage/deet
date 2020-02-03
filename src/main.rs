@@ -104,7 +104,7 @@ fn check<P: AsRef<OsStr>>(package: P) {
     printbl!("[DEBUG] ", "manifest path at:\n{:?}", manifest_path);
         
     let mut manifest_file = ManifestFile::new(&manifest_path).ekill();
-    for dep in manifest_file.deps().ekill() {
+    for mut dep in manifest_file.deps().ekill() {
         let local_path = match dep.source() {
             DepSource::Local { path } => path,
             _ => continue,
@@ -115,9 +115,16 @@ fn check<P: AsRef<OsStr>>(package: P) {
             local_path = canonicalize(local_path).ekill();
         }
         
+        let version = "0.999999.1239173261298736";
+        
+        dep.set_source(DepSource::Crates { 
+            version: version.to_string()
+        });
+        
         //let local_path = canonicalize(local_path).ekill();
         println!("LOCAL PATH: {:?}", local_path);
     }
+    manifest_file.save().ekill();
         
     /*
     use toml_edit as toml;
