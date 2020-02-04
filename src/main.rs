@@ -1,9 +1,11 @@
+#![feature(str_strip)]
 
 extern crate failure;
 extern crate unicode_segmentation;
 extern crate rand;
 extern crate regex;
 extern crate toml_edit;
+extern crate semver;
 
 /// Helpers for cli to the tool.
 #[macro_use] pub mod cli_util;
@@ -18,9 +20,10 @@ use crate::{
     cli_util::{
         parse_var,
         ResultExt,
+        Lines, GetLines,
     },
     cmd_util::{
-        preadln, preadlns
+        preadln, preadlns, pnonempty
     },
     path_util::path_rebase,
     manifest::{ManifestFile, Dep, DepSource, DepKey},
@@ -34,7 +37,7 @@ use std::{
     ffi::OsStr,
 };
 use rand::prelude::*;
-
+use semver::{Version, VersionReq};
 
 
 /// Check subcommand.
@@ -71,7 +74,10 @@ fn check<P: AsRef<OsStr>>(package: P) {
     exec!([&srp, "git remote add local {:?}", pckg_repo]);
     exec!([&srp, "git fetch local"]);
     exec!([&srp, "git checkout local/{}", pckg_branch]);
-    exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
+    
+    if exec!([&pckg_repo, "git diff"] | (pnonempty)) {
+        exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
+    }
     
     // ==== de-localize paths ====
     
@@ -82,7 +88,7 @@ fn check<P: AsRef<OsStr>>(package: P) {
     printbl!("- ", "Delocalizing manifest at:\n{:?}", manifest_path);
     
     let mut manifest_file = ManifestFile::new(&manifest_path).ekill();
-    for dep in manifest_file.deps().ekill() {
+    for mut dep in manifest_file.deps().ekill() {
         // get and canonicalize the local path
         let local_path = match dep.source().local_path().map(Path::new) {
             Some(path) => {
@@ -116,13 +122,53 @@ fn check<P: AsRef<OsStr>>(package: P) {
             })
             .collect();
         
-        printbl!("-- ", "Found relevant commits:\n{:#?}", commits);
+        printbl!("-- ", "Found relevant commits:\n{}", 
+            GetLines(&commits, |c| &c.pretty));
         
-        for commit in &commits {
-            
-        }
+        let latest_commit = commits.get(0)
+            .unwrap_or_else(|| kill!(
+                "You silly goose!\nThis repo doesn't have any commits"));
+        let tags: Vec<String> = exec!(
+            [&srp, "git tag --points-at {}", latest_commit.hash]
+            | (preadlns));
         
+        printbl!("-- ", "Looking at latest commit: {}", latest_commit.hash);
+        printbl!("-- ", "Found tags on commit:\n{}", Lines(&tags));
+        
+        let versions: Vec<Version> = tags.iter()
+            .filter_map(|tag| 
+                parse_release_tag(tag, dep.package()))
+            .collect();
+        
+        // select the version
+        let version = match versions.as_slice() {
+            &[] => /* TODO */ { eprintln!("No versions found on commit"); continue },
+            &[ref v] => v.clone(),
+            _ => { eprintln!("Several versions found on commit:\n{}", Lines(&versions)); continue },
+        };
+        
+        printbl!("-- ", "Found version {}", version);
+        
+        let version_req = format!(
+            "{}", VersionReq::parse(&format!(
+                "^{}", version)).ekill());
+                
+        printbl!("-- ", "Replacing local dep with version req {}", version_req);
+        
+        dep.set_source(DepSource::Crates {
+            version: version_req,
+        });
     }
+    
+    manifest_file.save().ekill();
+    
+    println!("hell yes!");
+}
+
+fn parse_release_tag(tag: &str, package: &str) -> Option<Version> {
+    tag.strip_prefix(package)
+        .and_then(|s| s.strip_prefix("-v"))
+        .and_then(|s| Version::parse(s).ok())
 }
 
 fn main() {

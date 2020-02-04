@@ -199,6 +199,15 @@ pub fn preadlns(stdout: ChildStdout) -> Vec<String> {
         .ekill()
 }
 
+/// Read the process's output, return whether it printed
+/// any non-whitespace character.
+pub fn pnonempty(mut stdout: ChildStdout) -> bool {
+    let mut buf = Vec::new();
+    stdout.read_to_end(&mut buf).ekill();
+    let out = String::from_utf8(buf).ekill();
+    out.trim().len() > 0
+}
+
 /// Join a process, return its exit code.
 pub fn pjoin(mut child: Child) -> Result<(), Error> {
     let status = child.wait().map_err(Error::from)?;
@@ -256,7 +265,7 @@ where
         .stderr(Stdio::piped())
         .current_dir(&workdir);    
     let sys_cmd_str = format!("{:?}", sys_cmd);
-    printbl!("[DEBUG] ", "executing command:\n{}", sys_cmd_str); 
+    //printbl!("[DEBUG] ", "executing command:\n{}", sys_cmd_str); 
     let mut subproc = sys_cmd.spawn().ekill();
     let subproc_in = subproc.stdin.take().unwrap();
     let subproc_out = subproc.stdout.take().unwrap();
