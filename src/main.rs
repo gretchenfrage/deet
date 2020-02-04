@@ -11,6 +11,7 @@ extern crate toml_edit;
 #[macro_use] pub mod cmd_util;
 pub mod hex;
 pub mod manifest;
+pub mod path_util;
 
 use crate::{
     hex::Hex,
@@ -19,9 +20,10 @@ use crate::{
         ResultExt,
     },
     cmd_util::{
-        preadln,
+        preadln, preadlns
     },
-    manifest::{ManifestFile, DepSource},
+    path_util::path_rebase,
+    manifest::{ManifestFile, Dep, DepSource, DepKey},
 };
 use std::{
     path::{PathBuf, Path},
@@ -33,11 +35,13 @@ use std::{
 };
 use rand::prelude::*;
 
+
+
 /// Check subcommand.
 fn check<P: AsRef<OsStr>>(package: P) {
     printbl!("- ", "Executing DEET check");
 
-    // recreate in a new git repo
+    // ==== recreate in a new git repo ====
     
     let pckg = PathBuf::from(package.as_ref());
     let pckg = canonicalize(&pckg).ekill();
@@ -69,54 +73,56 @@ fn check<P: AsRef<OsStr>>(package: P) {
     exec!([&srp, "git checkout local/{}", pckg_branch]);
     exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
     
-    use failure::{Error, format_err};
-    use std::fs::read_to_string;
-    
-    fn path_rebase<P0, P1, P2>(full: P0, old_base: P1, new_base: P2) -> Result<PathBuf, Error> 
-    where
-        P0: AsRef<Path>,
-        P1: AsRef<Path>,
-        P2: AsRef<Path>,
-    {
-        full.as_ref().strip_prefix(old_base.as_ref())
-            .map_err(|e| format_err!(
-                "error rebasing paths\n \
-                path={:?}\nfrom={:?}\nto={:?}\n\
-                error:\n{:#?}", 
-                full.as_ref(), 
-                old_base.as_ref(), 
-                new_base.as_ref(), 
-                e))
-            .map(|suffix| new_base.as_ref().join(suffix))
-    }
+    // ==== de-localize paths ====
     
     let package_path = path_rebase(&pckg, &pckg_repo, &srp)
         .ekill();
     let manifest_path = package_path.join("Cargo.toml");
-    printbl!("[DEBUG] ", "manifest path at:\n{:?}", manifest_path);
-        
+    
+    printbl!("- ", "Delocalizing manifest at:\n{:?}", manifest_path);
+    
     let mut manifest_file = ManifestFile::new(&manifest_path).ekill();
-    for mut dep in manifest_file.deps().ekill() {
-        let local_path = match dep.source() {
-            DepSource::Local { path } => path,
-            _ => continue,
+    for dep in manifest_file.deps().ekill() {
+        // get and canonicalize the local path
+        let local_path = match dep.source().local_path().map(Path::new) {
+            Some(path) => {
+                if path.is_relative() {
+                    canonicalize(package_path.join(&path)).ekill()
+                } else {
+                    canonicalize(path).ekill()
+                }
+            },
+            None => continue,
         };
-        let mut local_path = PathBuf::from(local_path);
-        if local_path.is_relative() {
-            local_path = package_path.join(local_path);
-            local_path = canonicalize(local_path).ekill();
+        
+        printbl!("-- ", "De-localizing dependency:\n{:#?}\nAt:\n{:?}", dep, local_path);
+        
+        // list relevant commits
+        #[derive(Debug, Clone)]
+        struct Commit {
+            hash: String,
+            pretty: String,
         }
         
-        let version = "0.999999.1239173261298736";
+        let commits: Vec<Commit> = exec!(
+            [&srp, r##" git log --format="%h" --follow -- {:?} "##, local_path]
+            | (preadlns))
+            .into_iter()
+            .map(|hash| {
+                let pretty = exec!(
+                    [&srp, r##" git log --format="* %C(auto)%h %f" -n 1 {} "##, hash]
+                    | (preadln));
+                Commit { hash, pretty }
+            })
+            .collect();
         
-        dep.set_source(DepSource::Crates { 
-            version: version.to_string()
-        });
+        printbl!("-- ", "Found relevant commits:\n{:#?}", commits);
         
-        println!("LOCAL PATH: {:?}", local_path);
+        for commit in &commits {
+            
+        }
+        
     }
-    manifest_file.save().ekill();
-
 }
 
 fn main() {

@@ -4,6 +4,7 @@ use std::{
     cell::RefCell,
     fs::{self, read_to_string},
     iter::FromIterator,
+    fmt::{self, Debug, Formatter},
     str::FromStr,
 };
 //use cargo_edit::Manifest;
@@ -20,6 +21,7 @@ pub struct ManifestFile {
 }
 
 impl ManifestFile {
+    /// Open a manifest file.
     pub fn new<P>(path: P) -> Result<Self, Error>
     where
         P: AsRef<Path>
@@ -41,6 +43,7 @@ impl ManifestFile {
         })
     }
     
+    /// Iterate dependency editors.
     pub fn deps<'s>(&'s self) 
         -> Result<impl Iterator<Item=Dep<'s>> + 's, Error> 
     {
@@ -51,25 +54,27 @@ impl ManifestFile {
             .iter()
             .flat_map(|(key, value)| 
                 parse_dep(self, key, value))
-            /*
-            .flat_map(|(key, elem)| {
-                elem.as_str()
-                    .and_then(|version| Dep {
-                        manifest: self,
-                        key: key.into(),
-                        name: key.into(),
-                        source: DepSource::Crates { version },
-                    })
-                    .or_else(|| elem.as_table_like()
-                        .and_then(|telem| {
-                            
-                        }))
-            })
-            */
             .collect::<Vec<Dep<'s>>>();
         Ok(deps.into_iter())
     }
     
+    /// Get a dependency editor by key.
+    pub fn dep(&self, key: &DepKey) -> Result<Dep, Error> {
+        let doc = self.toml.borrow();
+        let dep = doc["dependencies"].as_table_like()
+            .ok_or_else(|| format_err!("dependencies is \
+                not a table-like at:\n{:?}", self.path))?
+            .iter()
+            .flat_map(|(key, value)| 
+                parse_dep(self, key, value))
+            .find(|dep| dep.key == key.key)
+            .ok_or_else(|| 
+                format_err!("cannot find dependency:\n\
+                {:?}", key));
+        dep
+    }
+    
+    /// Save to the underlying manifest file.
     pub fn save(&mut self) -> Result<(), Error> {
         let doc = self.toml.borrow();
         let content = doc.to_string();
@@ -117,12 +122,27 @@ fn parse_dep<'m>(
             }))
 }
 
+/// Identifying key for a manifest dependency.
+#[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct DepKey { key: String }
+
 /// A dependency in a manifest file.
 pub struct Dep<'a> {
     manifest: &'a ManifestFile,
     key: String,
     package: String,
     source: DepSource,
+}
+
+impl<'a> Debug for Dep<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        f.debug_struct("Dep")
+            .field("manifest", &self.manifest.path)
+            .field("key", &self.key)
+            .field("package", &self.package)
+            .field("source", &self.source)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, PartialOrd)]
@@ -167,6 +187,11 @@ impl<'a> Dep<'a> {
     /// Get the package name.
     pub fn package(&self) -> &str { &self.package }
     
+    /// Get the dependency key.
+    pub fn key(&self) -> DepKey {
+        DepKey { key: self.key.clone() }
+    }
+    
     /// Get the package source
     pub fn source(&self) -> DepSource {
         self.source.clone()
@@ -180,7 +205,7 @@ impl<'a> Dep<'a> {
         let mut doc = self.manifest.toml.borrow_mut();
         
         // determine the key/val to insert
-        let (key, val) = match source {
+        let (key, val) = match source.clone() {
             DepSource::Crates { version } => (
                 "version", Value::from(version) ),
             DepSource::Local { path } => (
@@ -223,5 +248,6 @@ impl<'a> Dep<'a> {
         };
         
         *entry = replacement.into();
+        self.source = source;
     }
 }

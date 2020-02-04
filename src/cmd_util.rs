@@ -192,6 +192,13 @@ pub fn preadln(stdout: ChildStdout) -> String {
         .ekill().ekill()
 }
 
+/// Read a sequence of lines from a process's output.
+pub fn preadlns(stdout: ChildStdout) -> Vec<String> {
+    BufReader::new(stdout).lines()
+        .collect::<Result<Vec<_>, _>>()
+        .ekill()
+}
+
 /// Join a process, return its exit code.
 pub fn pjoin(mut child: Child) -> Result<(), Error> {
     let status = child.wait().map_err(Error::from)?;
