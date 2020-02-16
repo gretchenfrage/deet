@@ -108,6 +108,14 @@ fn run<P: AsRef<str>>(
             MoistMeter::Wet => kill!("Repo has unpushed commits"),
         };
     }
+    if exec!(
+        [&pckg_repo, "git log HEAD..origin/{}", pckg_branch] | (pnonempty)
+    ) {
+        match moist {
+            MoistMeter::Dry => warn!("Repo is behind origin"),
+            MoistMeter::Wet => kill!("Repo is behind origin"),
+        };
+    }
 
     let tmp: PathBuf = parse_var("DEET_TMP_DIR").ekill();
     let tmp = canonicalize(&tmp).ekill();
@@ -298,7 +306,7 @@ fn run<P: AsRef<str>>(
             info!("Running cargo publish dry run");
             exec!([package_path, "cargo publish --dry-run --allow-dirty"]);
             
-            catch.handle(true);
+            catch.handle(false);
         },
         MoistMeter::Wet => {
             catch.handle(false);
@@ -310,6 +318,7 @@ fn run<P: AsRef<str>>(
             exec!([&srp, "git checkout -b {}", pckg_branch]);
             exec!([&srp, "git push -u origin {0}:{0}", pckg_branch]);
             exec!([&srp, "git push -u origin {0}:{0}", publish_tag]);
+            exec!([&pckg_repo, "git fetch origin"]);
             exec!([&pckg_repo, "git pull origin {}", pckg_branch]);
             exec!([&pckg_repo, "git pull origin {}", publish_tag]);
         }
