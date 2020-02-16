@@ -1,0 +1,5 @@
+ci_algo.txt
+cmds.txt
+*.lock
+target
+.DS_Store
