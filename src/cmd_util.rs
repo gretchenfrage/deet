@@ -296,7 +296,7 @@ where
                 let released: usize = match pipe_into.write(chunk) {
                     Ok(n) => n,
                     Err(e) => {
-                        printbl!("[DIAGNOSTIC] ", "error writing into stdin:\n\
+                        warn!("error writing into stdin:\n\
                             {}\n\
                             to subprocess:\n\
                             {}", e, sys_cmd_str);

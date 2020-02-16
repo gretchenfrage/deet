@@ -1,11 +1,14 @@
 #![feature(str_strip)]
-
+#![feature(trace_macros)]
 extern crate failure;
 extern crate unicode_segmentation;
 extern crate rand;
 extern crate regex;
 extern crate toml_edit;
 extern crate semver;
+#[macro_use]
+extern crate log;
+extern crate lazy_static;
 
 /// Helpers for cli to the tool.
 #[macro_use] pub mod cli_util;
@@ -14,6 +17,8 @@ extern crate semver;
 pub mod hex;
 pub mod manifest;
 pub mod path_util;
+/// Command line output handling.
+pub mod output;
 
 use crate::{
     hex::Hex,
@@ -27,6 +32,11 @@ use crate::{
     },
     path_util::path_rebase,
     manifest::{ManifestFile, Dep, DepSource, DepKey},
+    output::{
+        LogMode,
+        log_indent,
+        catch_errors,
+    }
 };
 use std::{
     path::{PathBuf, Path},
@@ -38,36 +48,36 @@ use std::{
 };
 use rand::prelude::*;
 use semver::{Version, VersionReq};
-
+use unicode_segmentation::UnicodeSegmentation;
 
 /// Check subcommand.
 fn check<P: AsRef<OsStr>>(package: P) {
-    printbl!("- ", "Executing DEET check");
+    info!("Executing DEET check");
 
     // ==== recreate in a new git repo ====
     
     let pckg = PathBuf::from(package.as_ref());
     let pckg = canonicalize(&pckg).ekill();
-    printbl!("- ", "For package at:\n{:?}", pckg);
+    debug!("For package at:\n{:?}", pckg);
     
     let pckg_repo = exec!(
         [&pckg, "git rev-parse --show-toplevel"] 
         | (preadln)
     );
-    printbl!("- ", "Using the repo at:\n{:?}", pckg_repo);
+    debug!("Using the repo at:\n{:?}", pckg_repo);
     
     let pckg_branch = exec!(
         [&pckg, "git rev-parse --abbrev-ref HEAD"]
         | (preadln)
     );
-    printbl!("- ", "Which is in branch {:?}", pckg_branch);
+    debug!("Which is in branch {:?}", pckg_branch);
 
     let tmp: PathBuf = parse_var("DEET_TMP_DIR").ekill();
     let tmp = canonicalize(&tmp).ekill();
-    printbl!("- ", "Using temp directory:\n{:?}", &tmp);
+    debug!("Using temp directory:\n{:?}", &tmp);
     
     let srp: PathBuf = tmp.join(format!("srp-{}", random::<Hex>()));
-    printbl!("- ", "Creating scratch repo in:\n{:?}", srp);
+    debug!("Creating scratch repo in:\n{:?}", srp);
     
     mkdir(&srp).ekill();
     exec!([&srp, "git init"]);
@@ -85,7 +95,9 @@ fn check<P: AsRef<OsStr>>(package: P) {
         .ekill();
     let manifest_path = package_path.join("Cargo.toml");
     
-    printbl!("- ", "Delocalizing manifest at:\n{:?}", manifest_path);
+    info!("Delocalizing manifest at:\n{:?}", manifest_path);
+    
+    let catch = catch_errors(true);
     
     let mut manifest_file = ManifestFile::new(&manifest_path).ekill();
     for mut dep in manifest_file.deps().ekill() {
@@ -101,12 +113,13 @@ fn check<P: AsRef<OsStr>>(package: P) {
             None => continue,
         };
         
-        printbl!("-- ", "De-localizing dependency:\n{:#?}\nAt:\n{:?}", dep, local_path);
+        info!("De-localizing dependency:\n{:#?}\nAt:\n{:?}", dep, local_path);
         
         // list relevant commits
         #[derive(Debug, Clone)]
         struct Commit {
             hash: String,
+            semipretty: String,
             pretty: String,
         }
         
@@ -118,11 +131,29 @@ fn check<P: AsRef<OsStr>>(package: P) {
                 let pretty = exec!(
                     [&srp, r##" git log --format="* %C(auto)%h %f" -n 1 {} "##, hash]
                     | (preadln));
-                Commit { hash, pretty }
+                    
+                let semipretty = {
+                    let msg: String = exec!(
+                        [&srp, r##" git log --format="%f" -n 1 {} "##, hash]
+                        | (preadln));
+                    let max_len = 30;
+                    let mut concise = String::with_capacity(max_len);
+                    let mut count = 0;
+                    for g in msg.graphemes(true).take(max_len - 1) {
+                        concise.push_str(g);
+                        count += 1;
+                    }
+                    if count == max_len - 1 {
+                        concise.push('…');
+                    }
+                    format!("{} {:?}", hash, concise)
+                };
+                    
+                Commit { hash, pretty, semipretty }
             })
             .collect();
         
-        printbl!("-- ", "Found relevant commits:\n{}", 
+        debug!("Found relevant commits:\n{}", 
             GetLines(&commits, |c| &c.pretty));
         
         let latest_commit = commits.get(0)
@@ -132,8 +163,8 @@ fn check<P: AsRef<OsStr>>(package: P) {
             [&srp, "git tag --points-at {}", latest_commit.hash]
             | (preadlns));
         
-        printbl!("-- ", "Looking at latest commit: {}", latest_commit.hash);
-        printbl!("-- ", "Found tags on commit:\n{}", Lines(&tags));
+        info!("Looking at latest commit: {}", latest_commit.semipretty);
+        debug!("Found tags on commit:\n{}", Lines(&tags));
         
         let versions: Vec<Version> = tags.iter()
             .filter_map(|tag| 
@@ -142,27 +173,35 @@ fn check<P: AsRef<OsStr>>(package: P) {
         
         // select the version
         let version = match versions.as_slice() {
-            &[] => /* TODO */ { eprintln!("No versions found on commit"); continue },
+            &[] => { 
+                error!("No versions found on commit"); 
+                continue;
+            },
             &[ref v] => v.clone(),
-            _ => { eprintln!("Several versions found on commit:\n{}", Lines(&versions)); continue },
+            _ => { 
+                error!("Several versions found on commit:\n{}", Lines(&versions)); 
+                continue;
+            },
         };
         
-        printbl!("-- ", "Found version {}", version);
+        info!("Found version {}", version);
         
         let version_req = format!(
             "{}", VersionReq::parse(&format!(
                 "^{}", version)).ekill());
                 
-        printbl!("-- ", "Replacing local dep with version req {}", version_req);
+        debug!("Replacing local dep with version req {}", version_req);
         
         dep.set_source(DepSource::Crates {
             version: version_req,
         });
     }
     
+    catch.handle(true);
+    
     manifest_file.save().ekill();
     
-    println!("hell yes!");
+    info!("hell yes!");
 }
 
 fn parse_release_tag(tag: &str, package: &str) -> Option<Version> {
@@ -172,6 +211,18 @@ fn parse_release_tag(tag: &str, package: &str) -> Option<Version> {
 }
 
 fn main() {
+    match_var!(match var("LOG") {
+        None | Some("default") => {
+            output::init(LogMode::Default);
+        },
+        Some("verbose") => output::init(LogMode::Verbose),
+        Some("trace") => output::init(LogMode::Trace),
+        val => {
+            output::init(LogMode::Default);
+            warn!("invalid LOG value: {:?}", val);
+        }
+    });
+        
     match_args!(match {
         ["check", package] => check(package),
         args => kill!("illegal cli args: {:?}", args),

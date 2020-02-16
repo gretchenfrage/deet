@@ -17,10 +17,19 @@ macro_rules! match_args {
     }};
 }
 
+/// Match on optional env var.
+macro_rules! match_var {
+    (match var($key:expr) { $($t:tt)* })=>{{
+        let var0: Option<String> = std::env::var($key).ok();
+        let var1: Option<&str> = var0.as_ref().map(String::as_str);
+        match var1 { $($t)* }
+    }};
+}
+
 /// Print an abort message, then exit process.
 macro_rules! kill {
     ($($t:tt)*)=>{{
-        $crate::cli_util::printblock("[ABORT] ", format_args!($($t)*));
+        error!($($t)*);
         std::process::exit(1)
     }};
 }
@@ -98,6 +107,7 @@ where
     }
 }
 
+/*
 /// Print formatting helper.
 pub fn printblock(tag: &str, block: fmt::Arguments) {
     let block = format!("{}", block);
@@ -128,6 +138,7 @@ macro_rules! printbl {
         $crate::cli_util::printblock($tag, format_args!($($t)*)) 
     }
 }
+*/
 
 /// Get and parse env var or abort.
 pub fn parse_var<T: FromStr>(name: &str) -> Result<T, Error>
