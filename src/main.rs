@@ -12,17 +12,6 @@ extern crate semver;
 extern crate log;
 extern crate lazy_static;
 
-/*
-/// Helpers for cli to the tool.
-#[macro_use] pub mod cli_util;
-/// Helpers for running subcommands.
-#[macro_use] pub mod cmd_util;
-pub mod hex;
-pub mod manifest;
-pub mod path_util;
-/// Command line output handling.
-pub mod output;
-*/
 #[macro_use]
 pub mod util;
 pub mod leet;
@@ -45,6 +34,7 @@ use crate::{
             pnonempty,
         },
         path::path_rebase,
+        git,
     },
     maniflect::{ManifestFile, DepSource},
     leet::{
@@ -64,7 +54,6 @@ use semver::{
     Version, 
     VersionReq
 };
-use unicode_segmentation::UnicodeSegmentation;
 
 /// Check subcommand.
 fn check<P: AsRef<OsStr>>(package: P) {
@@ -132,42 +121,7 @@ fn check<P: AsRef<OsStr>>(package: P) {
         info!("De-localizing dependency {:?} at:\n{:?}", dep.package(), local_path);
         
         // list relevant commits
-        #[derive(Debug, Clone)]
-        struct Commit {
-            hash: String,
-            semipretty: String,
-            pretty: String,
-        }
-        
-        let commits: Vec<Commit> = exec!(
-            [&srp, r##" git log --format="%h" --follow -- {:?} "##, local_path]
-            | (preadlns))
-            .into_iter()
-            .map(|hash| {
-                let pretty = exec!(
-                    [&srp, r##" git log --format="* %C(auto)%h %f" -n 1 {} "##, hash]
-                    | (preadln));
-                    
-                let semipretty = {
-                    let msg: String = exec!(
-                        [&srp, r##" git log --format="%f" -n 1 {} "##, hash]
-                        | (preadln));
-                    let max_len = 30;
-                    let mut concise = String::with_capacity(max_len);
-                    let mut count = 0;
-                    for g in msg.graphemes(true).take(max_len - 1) {
-                        concise.push_str(g);
-                        count += 1;
-                    }
-                    if count == max_len - 1 {
-                        concise.push('…');
-                    }
-                    format!("{} {:?}", hash, concise)
-                };
-                    
-                Commit { hash, pretty, semipretty }
-            })
-            .collect();
+        let commits = git::follow(&srp, &local_path);
         
         debug!("Found relevant commits:\n{}", 
             LinesView(&commits, |c| &c.pretty));
@@ -179,7 +133,7 @@ fn check<P: AsRef<OsStr>>(package: P) {
             [&srp, "git tag --points-at {}", latest_commit.hash]
             | (preadlns));
         
-        info!("Looking at latest commit: {}", latest_commit.semipretty);
+        info!("Looking at latest commit: {}", latest_commit.concise);
         debug!("Found tags on commit:\n{}", Lines(&tags));
         
         let versions: Vec<Version> = tags.iter()

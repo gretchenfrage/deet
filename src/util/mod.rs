@@ -7,3 +7,4 @@ pub mod cmd;
 pub mod display;
 pub mod hex;
 pub mod path;
+pub mod git;
