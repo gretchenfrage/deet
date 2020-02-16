@@ -1,5 +1,7 @@
 
-use crate::cli_util::ResultExt;
+//! Shell-like subprocess execution DSL.
+
+use crate::util::cli::ResultExt;
 use std::{
     io::{Read, Write, BufRead, BufReader, BufWriter},
     path::Path,
@@ -75,7 +77,7 @@ macro_rules! exec {
     ))=>{{
         let (subproc, subproc_stdout) = $curr;
         std::thread::spawn(move || {
-            $crate::cmd_util::pjoin(subproc).ekill();
+            $crate::util::cmd::pjoin(subproc).ekill();
         });
         exec!(@recurse(
             last=cmd,
@@ -98,11 +100,9 @@ macro_rules! exec {
         last=cmd,
         $curr:expr,
     ))=>{{
-        //$crate::cmd_util::printout($curr);
-        
         let (subproc, subproc_stdout) = $curr;
-        $crate::cmd_util::printout(subproc_stdout);
-        $crate::cmd_util::pjoin(subproc).ekill();
+        $crate::util::cmd::printout(subproc_stdout);
+        $crate::util::cmd::pjoin(subproc).ekill();
         
     }};
     
@@ -116,13 +116,13 @@ macro_rules! exec {
         $curr:expr
     ))=>{{
         let (subproc, subproc_stdout) = $curr;
-        $crate::cmd_util::pjoin(subproc).ekill();
+        $crate::util::cmd::pjoin(subproc).ekill();
         subproc_stdout
     }};
     
     // cmd syntax into expr
     (@cmd($input:expr, $workdir:expr, $($t:tt)*))=>{
-        $crate::cmd_util::exec_command(
+        $crate::util::cmd::exec_command(
             $input, $workdir, format!($($t)*))
     };
 }
@@ -265,7 +265,7 @@ where
         .stderr(Stdio::piped())
         .current_dir(&workdir);    
     let sys_cmd_str = format!("{:?}", sys_cmd);
-    //printbl!("[DEBUG] ", "executing command:\n{}", sys_cmd_str); 
+    trace!("Executing command:\n{}", sys_cmd_str); 
     let mut subproc = sys_cmd.spawn().ekill();
     let subproc_in = subproc.stdin.take().unwrap();
     let subproc_out = subproc.stdout.take().unwrap();

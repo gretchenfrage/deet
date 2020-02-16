@@ -1,4 +1,6 @@
 
+//! File-system path utilities.
+
 use std::path::{Path, PathBuf};
 use failure::{Error, format_err};
 

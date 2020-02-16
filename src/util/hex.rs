@@ -1,3 +1,4 @@
+//! Random hexadecimal id.
 
 use std::fmt::{self, Formatter, Display};
 use rand::{

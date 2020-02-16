@@ -1,4 +1,6 @@
 
+//! Reading and editing cargo manifest files.
+
 use std::{
     path::{Path, PathBuf},
     cell::RefCell,
@@ -7,7 +9,6 @@ use std::{
     fmt::{self, Debug, Formatter},
     str::FromStr,
 };
-//use cargo_edit::Manifest;
 use toml_edit::{
     Document,
     Item, Value, Key,

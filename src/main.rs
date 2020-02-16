@@ -1,5 +1,7 @@
 #![feature(str_strip)]
 #![feature(trace_macros)]
+#![feature(backtrace)]
+
 extern crate failure;
 extern crate unicode_segmentation;
 extern crate rand;
@@ -10,6 +12,7 @@ extern crate semver;
 extern crate log;
 extern crate lazy_static;
 
+/*
 /// Helpers for cli to the tool.
 #[macro_use] pub mod cli_util;
 /// Helpers for running subcommands.
@@ -19,22 +22,32 @@ pub mod manifest;
 pub mod path_util;
 /// Command line output handling.
 pub mod output;
+*/
+#[macro_use]
+pub mod util;
+pub mod leet;
+pub mod maniflect;
 
 use crate::{
-    hex::Hex,
-    cli_util::{
-        parse_var,
-        ResultExt,
-        Lines, GetLines,
+    util::{
+        hex::Hex,
+        cli::{
+            parse_var,
+            ResultExt,
+        },
+        display::{
+            Lines, 
+            LinesView,
+        },
+        cmd::{
+            preadln, 
+            preadlns,
+            pnonempty,
+        },
+        path::path_rebase,
     },
-    cmd_util::{
-        preadln, preadlns, pnonempty
-    },
-    path_util::path_rebase,
-    manifest::{ManifestFile, Dep, DepSource, DepKey},
-    output::{
-        LogMode,
-        log_indent,
+    maniflect::{ManifestFile, DepSource},
+    leet::{
         catch_errors,
     }
 };
@@ -47,7 +60,10 @@ use std::{
     ffi::OsStr,
 };
 use rand::prelude::*;
-use semver::{Version, VersionReq};
+use semver::{
+    Version, 
+    VersionReq
+};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Check subcommand.
@@ -113,7 +129,7 @@ fn check<P: AsRef<OsStr>>(package: P) {
             None => continue,
         };
         
-        info!("De-localizing dependency:\n{:#?}\nAt:\n{:?}", dep, local_path);
+        info!("De-localizing dependency {:?} at:\n{:?}", dep.package(), local_path);
         
         // list relevant commits
         #[derive(Debug, Clone)]
@@ -154,7 +170,7 @@ fn check<P: AsRef<OsStr>>(package: P) {
             .collect();
         
         debug!("Found relevant commits:\n{}", 
-            GetLines(&commits, |c| &c.pretty));
+            LinesView(&commits, |c| &c.pretty));
         
         let latest_commit = commits.get(0)
             .unwrap_or_else(|| kill!(
@@ -211,17 +227,7 @@ fn parse_release_tag(tag: &str, package: &str) -> Option<Version> {
 }
 
 fn main() {
-    match_var!(match var("LOG") {
-        None | Some("default") => {
-            output::init(LogMode::Default);
-        },
-        Some("verbose") => output::init(LogMode::Verbose),
-        Some("trace") => output::init(LogMode::Trace),
-        val => {
-            output::init(LogMode::Default);
-            warn!("invalid LOG value: {:?}", val);
-        }
-    });
+    leet::init_from_env();
         
     match_args!(match {
         ["check", package] => check(package),
