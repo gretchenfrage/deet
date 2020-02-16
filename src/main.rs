@@ -11,11 +11,15 @@ extern crate semver;
 #[macro_use]
 extern crate log;
 extern crate lazy_static;
+extern crate pulldown_cmark;
 
 #[macro_use]
 pub mod util;
+#[macro_use]
 pub mod leet;
 pub mod maniflect;
+/// Changelog parsing.
+pub mod changelog;
 
 use crate::{
     util::{
@@ -39,15 +43,17 @@ use crate::{
     maniflect::{ManifestFile, DepSource},
     leet::{
         catch_errors,
-    }
+        log_indent,
+    },
+    changelog::read_changelog,
 };
 use std::{
     path::{PathBuf, Path},
     fs::{
+        self,
         canonicalize,
         create_dir as mkdir,
     },
-    ffi::OsStr,
 };
 use rand::prelude::*;
 use semver::{
@@ -55,11 +61,23 @@ use semver::{
     VersionReq
 };
 
-/// Check subcommand.
-fn check<P: AsRef<OsStr>>(package: P) {
-    info!("Executing DEET check");
+#[derive(Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+enum MoistMeter {
+    Dry,
+    Wet,
+}
 
-    // ==== recreate in a new git repo ====
+/// Check subcommand.
+fn run<P: AsRef<str>>(
+    package: P,
+    version: Option<Version>,
+    moist: MoistMeter,
+) {
+    match moist {
+        MoistMeter::Dry => info!("Executing DEET check"),
+        MoistMeter::Wet => info!("Publishing crate via DEET"),
+    };
+    let catch = catch_errors(false);
     
     let pckg = PathBuf::from(package.as_ref());
     let pckg = canonicalize(&pckg).ekill();
@@ -76,6 +94,20 @@ fn check<P: AsRef<OsStr>>(package: P) {
         | (preadln)
     );
     debug!("Which is in branch {:?}", pckg_branch);
+    if pckg_branch != "master" {
+        match moist {
+            MoistMeter::Dry => warn!("Repo is not in master branch"),
+            MoistMeter::Wet => kill!("Repo is not in master branch"),
+        };
+    }
+    if exec!(
+        [&pckg_repo, "git log origin/{}..HEAD", pckg_branch] | (pnonempty)
+    ) {
+        match moist {
+            MoistMeter::Dry => warn!("Repo has unpushed commits"),
+            MoistMeter::Wet => kill!("Repo has unpushed commits"),
+        };
+    }
 
     let tmp: PathBuf = parse_var("DEET_TMP_DIR").ekill();
     let tmp = canonicalize(&tmp).ekill();
@@ -86,13 +118,56 @@ fn check<P: AsRef<OsStr>>(package: P) {
     
     mkdir(&srp).ekill();
     exec!([&srp, "git init"]);
-    exec!([&srp, "git remote add local {:?}", pckg_repo]);
-    exec!([&srp, "git fetch local"]);
-    exec!([&srp, "git checkout local/{}", pckg_branch]);
+    match moist {
+        MoistMeter::Dry => {
+            // pull from local, and move over local changes
+            exec!([&srp, "git remote add local {:?}", pckg_repo]);
+            exec!([&srp, "git fetch local"]);
+            exec!([&srp, "git checkout local/{}", pckg_branch]);
+            
+            let mut local_changes = false;
+            if exec!([&pckg_repo, "git diff"] | (pnonempty)) {
+                exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
+                local_changes = true;
+            }
+            for path in exec!(
+                [&pckg_repo, "git ls-files --others --exclude-standard"] 
+                | (preadlns)) 
+            {
+                fs::copy(
+                    Path::new(&pckg_repo).join(&path), 
+                    srp.join(&path)
+                ).ekill();
+                local_changes = true;
+            }
+            if local_changes {
+                warn!("Uncommitted local changes copied over.")
+            }
+        },
+        MoistMeter::Wet => {
+            // stopgap
+            if exec!(
+                [&pckg_repo, "git diff"] | (pnonempty)
+            ) {
+                kill!("There are uncommitted local changes:\n{}",
+                    Lines(exec!([&pckg_repo, "git diff"] | (preadlns))));
+            }
+            
+            if exec!(
+                [&pckg_repo, "git ls-files --others --exclude-standard"] | (pnonempty)
+            ) {
+                kill!("There are uncommitted local new files:\n{}",
+                    Lines(exec!([&pckg_repo, "git ls-files --others --exclude-standard"] | (preadlns))));
+            }
+            
+            let origin = exec!([&pckg_repo, "git config --get remote.origin.url"] | (preadln));
+            info!("Pulling from {}", origin);
+            exec!([&srp, "git remote add origin {:?}", origin]);
+            exec!([&srp, "git fetch origin"]);
+            exec!([&srp, "git checkout origin/{}", pckg_branch]);
+        },
+    };
     
-    if exec!([&pckg_repo, "git diff"] | (pnonempty)) {
-        exec!([&pckg_repo, "git diff"] | [&srp, "git apply"]);
-    }
     
     // ==== de-localize paths ====
     
@@ -102,10 +177,11 @@ fn check<P: AsRef<OsStr>>(package: P) {
     
     info!("Delocalizing manifest at:\n{:?}", manifest_path);
     
-    let catch = catch_errors(true);
-    
+    let indent = log_indent();
     let mut manifest_file = ManifestFile::new(&manifest_path).ekill();
     for mut dep in manifest_file.deps().ekill() {
+        indent.linebreak();
+        
         // get and canonicalize the local path
         let local_path = match dep.source().local_path().map(Path::new) {
             Some(path) => {
@@ -166,12 +242,80 @@ fn check<P: AsRef<OsStr>>(package: P) {
             version: version_req,
         });
     }
-    
-    catch.handle(true);
-    
+    indent.end();
     manifest_file.save().ekill();
     
-    info!("hell yes!");
+    // run checks
+    info!("Running cargo check");
+    exec!([&package_path, "cargo check"]);
+    
+    info!("Running cargo test");
+    exec!([&package_path, "cargo test"]);
+    
+    let changelog_path = package_path.join("CHANGELOG.md");
+    info!("Reading changelog at {:?}", changelog_path);
+    let changelog = read_changelog(&changelog_path)
+        .map_err(|e| kill!("error reading changelog:\n{}", e))
+        .unwrap();
+    debug!("Changelog: \n\n{}", Lines(&changelog));
+    
+    let version = match version {
+        None => {
+            info!("Since no version to release was specified,\n\
+                   the check is ending now.");
+            return catch.handle(true);
+        },
+        Some(v) => v,
+    };
+    
+    let version_note = changelog
+        .iter()
+        .find(|e| e.version == version)
+        .cloned();
+    let version_note = match version_note {
+        Some(n) => n,
+        None => {
+            kill!("Could not find version {} in changelog", version);
+        },
+    };
+    
+    info!("Current version = {}", manifest_file.version().ekill());
+    info!("Found version {} in changelog:\n{}", version, version_note);
+    
+    debug!("Altering version in manifest at:\n{:?}", manifest_path);
+    manifest_file.set_version(&version.to_string()).ekill();
+    manifest_file.save().ekill();
+    
+    // make a new commit
+    info!("Creating new commit");
+    let publish_tag = format!("{}-v{}", package.as_ref(), version);
+    exec!([&srp, "git add {:?}", manifest_path]);
+    exec!([&srp, r#"git commit -m "Publish {}""#, publish_tag]);
+    exec!([&srp, "git tag {} HEAD", publish_tag]);
+    
+    match moist {
+        MoistMeter::Dry => {
+            info!("Running cargo publish dry run");
+            exec!([package_path, "cargo publish --dry-run --allow-dirty"]);
+            
+            catch.handle(true);
+        },
+        MoistMeter::Wet => {
+            catch.handle(false);
+            
+            info!("Publishing to crates.io");
+            exec!([package_path, "cargo publish"]);
+            
+            color!(green"[ INFO  ] Successfully published, committing in git.";,);
+            exec!([&srp, "git checkout -b {}", pckg_branch]);
+            exec!([&srp, "git push -u origin {0}:{0}", pckg_branch]);
+            exec!([&srp, "git push -u origin {0}:{0}", publish_tag]);
+            exec!([&pckg_repo, "git pull origin {}", pckg_branch]);
+            exec!([&pckg_repo, "git pull origin {}", publish_tag]);
+        }
+    };
+    
+    color!("\n";green"[ EXIT  ] Process successful.";"\n";,);
 }
 
 fn parse_release_tag(tag: &str, package: &str) -> Option<Version> {
@@ -184,7 +328,15 @@ fn main() {
     leet::init_from_env();
         
     match_args!(match {
-        ["check", package] => check(package),
+        ["check", package] => run(package, None, MoistMeter::Dry),
+        ["check", package, version] => {
+            let version = version.parse::<Version>().ekill();
+            run(package, Some(version), MoistMeter::Dry);
+        },
+        ["publish", package, version] => {
+            let version = version.parse::<Version>().ekill();
+            run(package, Some(version), MoistMeter::Wet);
+        },
         args => kill!("illegal cli args: {:?}", args),
     });
 }

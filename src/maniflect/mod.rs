@@ -75,6 +75,47 @@ impl ManifestFile {
         dep
     }
     
+    /// Get the current version of this package.
+    pub fn version(&self) -> Result<String, Error> {
+        let doc = self.toml.borrow();
+        doc["package"].as_table_like()
+            .ok_or_else(|| format_err!("package is not at table-like \
+                at:\n{:?}", self.path))
+            .and_then(|table| table.get("version")
+                .ok_or_else(|| format_err!("package is missing version \
+                    at:\n{:?}", self.path)))
+            .and_then(|item| item.as_str()
+                .map(String::from)
+                .ok_or_else(|| format_err!("version is not string \
+                    at:\n{:?}", self.path)))
+    }
+    
+    /// Set the current version of this package.
+    pub fn set_version(&self, version: &str) -> Result<(), Error> {
+        let mut doc = self.toml.borrow_mut();
+        let lib = &mut doc["package"];
+        
+        if lib.is_table() {
+            let table = lib.as_table_mut().unwrap();
+            table["version"] = Item::Value(Value::from(version));
+        } else if lib.is_inline_table() {
+            let mut table = lib.as_inline_table_mut().unwrap().clone();
+            
+            Value::from_iter(vec![(
+                &Key::from_str("version").unwrap(), 
+                version
+            )])
+                .as_inline_table_mut()
+                .unwrap()
+                .merge_into(&mut table);
+        } else {
+            return Err(format_err!("package is not at table-like \
+                at:\n{:?}", self.path));
+        }
+        
+        Ok(())
+    }
+    
     /// Save to the underlying manifest file.
     pub fn save(&mut self) -> Result<(), Error> {
         let doc = self.toml.borrow();
