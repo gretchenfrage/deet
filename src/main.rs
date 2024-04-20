@@ -1,14 +1,6 @@
 
-extern crate failure;
-extern crate unicode_segmentation;
-extern crate rand;
-extern crate regex;
-extern crate toml_edit;
-extern crate semver;
 #[macro_use]
 extern crate log;
-extern crate lazy_static;
-extern crate pulldown_cmark;
 
 #[macro_use]
 pub mod util;
@@ -334,6 +326,7 @@ fn main() {
     leet::init_from_env();
         
     match_args!(match {
+        [] | ["--help"] => println!("{}", include_str!("../README.txt").trim()),
         ["check", package] => run(package, None, MoistMeter::Dry),
         ["check", package, version] => {
             let version = version.parse::<Version>().ekill();
