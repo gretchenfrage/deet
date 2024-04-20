@@ -17,7 +17,6 @@ mod indent;
 /// Implementation guts.
 pub (self) mod inner;
 
-#[doc(opaque)]
 pub use scope::{
     LogIndent, log_indent,
     CatchErrors, catch_errors,

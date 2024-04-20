@@ -83,7 +83,7 @@ impl CatchErrors {
             problems.retain(|p| p.level() == ProblemLevel::Error);
         }
         if problems.len() > 0 {
-            color!("\n";red"[ EXIT  ] Process failed.";"\n";,);
+            color!("\n";red "[ EXIT  ] Process failed.";"\n";,);
             process::exit(1);
         }
     }

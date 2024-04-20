@@ -84,9 +84,6 @@ impl Display for ProblemLevel {
 }
 
 impl Error for Problem {
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.backtrace()
-    }
 }
 
 /// Owned equivalent to log::Record. 

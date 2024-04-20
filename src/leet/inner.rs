@@ -71,11 +71,11 @@ impl Log for Logger {
         }
         
         let fstatus: &str = match record.level() {
-            Level::Info =>  color!(yellow"[ INFO  ]";str),
-            Level::Warn =>  color!(red   "[ WARN  ]";str),
-            Level::Error => color!(red   "[ ERROR ]";str),
-            Level::Trace => color!(cyan  "[ TRACE ]";str),
-            Level::Debug => color!(blue  "[ INFO  ]";str),
+            Level::Info =>  color!(yellow "[ INFO  ]";str),
+            Level::Warn =>  color!(red    "[ WARN  ]";str),
+            Level::Error => color!(red    "[ ERROR ]";str),
+            Level::Trace => color!(cyan   "[ TRACE ]";str),
+            Level::Debug => color!(blue   "[ INFO  ]";str),
         };
         
         let forigin: String;
@@ -89,11 +89,11 @@ impl Log for Logger {
             forigin = format!("");
         }
         let forigin: String = match record.level() {
-            Level::Info =>  color!(yellow"{}";format, forigin),
-            Level::Warn =>  color!(red   "{}";format, forigin),
-            Level::Error => color!(red   "{}";format, forigin),
-            Level::Trace => color!(cyan  "{}";format, forigin),
-            Level::Debug => color!(blue  "{}";format, forigin),
+            Level::Info =>  color!(yellow "{}";format, forigin),
+            Level::Warn =>  color!(red    "{}";format, forigin),
+            Level::Error => color!(red    "{}";format, forigin),
+            Level::Trace => color!(cyan   "{}";format, forigin),
+            Level::Debug => color!(blue   "{}";format, forigin),
         };
         
         let indent = m_read(&INDENT, u32::clone);

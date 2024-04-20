@@ -1,6 +1,3 @@
-#![feature(str_strip)]
-#![feature(trace_macros)]
-#![feature(backtrace)]
 
 extern crate failure;
 extern crate unicode_segmentation;
@@ -314,7 +311,7 @@ fn run<P: AsRef<str>>(
             info!("Publishing to crates.io");
             exec!([package_path, "cargo publish"]);
             
-            color!(green"[ INFO  ] Successfully published, committing in git.";,);
+            color!(green "[ INFO  ] Successfully published, committing in git.";,);
             exec!([&srp, "git checkout -b {}", pckg_branch]);
             exec!([&srp, "git push -u origin {0}:{0}", pckg_branch]);
             exec!([&srp, "git push -u origin {0}:{0}", publish_tag]);
@@ -324,7 +321,7 @@ fn run<P: AsRef<str>>(
         }
     };
     
-    color!("\n";green"[ EXIT  ] Process successful.";"\n";,);
+    color!("\n";green "[ EXIT  ] Process successful.";"\n";,);
 }
 
 fn parse_release_tag(tag: &str, package: &str) -> Option<Version> {
