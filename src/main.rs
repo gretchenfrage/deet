@@ -83,10 +83,10 @@ fn run<P: AsRef<str>>(
         | (preadln)
     );
     debug!("Which is in branch {:?}", pckg_branch);
-    if pckg_branch != "master" {
+    if pckg_branch != "main" {
         match moist {
-            MoistMeter::Dry => warn!("Repo is not in master branch"),
-            MoistMeter::Wet => kill!("Repo is not in master branch"),
+            MoistMeter::Dry => warn!("Repo is not in main branch"),
+            MoistMeter::Wet => kill!("Repo is not in main branch"),
         };
     }
     if exec!(
@@ -105,11 +105,9 @@ fn run<P: AsRef<str>>(
             MoistMeter::Wet => kill!("Repo is behind origin"),
         };
     }
-
     let tmp: PathBuf = parse_var("DEET_TMP_DIR").ekill();
     let tmp = canonicalize(&tmp).ekill();
     debug!("Using temp directory:\n{:?}", &tmp);
-    
     let srp: PathBuf = tmp.join(format!("srp-{}", random::<Hex>()));
     debug!("Creating scratch repo in:\n{:?}", srp);
     
@@ -120,7 +118,7 @@ fn run<P: AsRef<str>>(
             // pull from local, and move over local changes
             exec!([&srp, "git remote add local {:?}", pckg_repo]);
             exec!([&srp, "git fetch local"]);
-            exec!([&srp, "git checkout local/{}", pckg_branch]);
+            exec!([&srp, "git -c advice.detachedHead=false checkout local/{}", pckg_branch]);
             
             let mut local_changes = false;
             if exec!([&pckg_repo, "git diff"] | (pnonempty)) {
@@ -131,6 +129,7 @@ fn run<P: AsRef<str>>(
                 [&pckg_repo, "git ls-files --others --exclude-standard"] 
                 | (preadlns)) 
             {
+                fs::create_dir_all(srp.join(&path).parent().unwrap()).ekill();
                 fs::copy(
                     Path::new(&pckg_repo).join(&path), 
                     srp.join(&path)
@@ -171,14 +170,11 @@ fn run<P: AsRef<str>>(
     let package_path = path_rebase(&pckg, &pckg_repo, &srp)
         .ekill();
     let manifest_path = package_path.join("Cargo.toml");
-    
     info!("Delocalizing manifest at:\n{:?}", manifest_path);
-    
+
     let indent = log_indent();
     let mut manifest_file = ManifestFile::new(&manifest_path).ekill();
     for mut dep in manifest_file.deps().ekill() {
-        indent.linebreak();
-        
         // get and canonicalize the local path
         let local_path = match dep.source().local_path().map(Path::new) {
             Some(path) => {
@@ -190,7 +186,8 @@ fn run<P: AsRef<str>>(
             },
             None => continue,
         };
-        
+
+        indent.linebreak();
         info!("De-localizing dependency {:?} at:\n{:?}", dep.package(), local_path);
         
         // list relevant commits
@@ -248,6 +245,9 @@ fn run<P: AsRef<str>>(
     
     info!("Running cargo test");
     exec!([&package_path, "cargo test"]);
+
+    info!("Running cargo doc");
+    exec!([&package_path, "cargo doc --no-deps --document-private-items"]);
     
     let changelog_path = package_path.join("CHANGELOG.md");
     info!("Reading changelog at {:?}", changelog_path);
@@ -258,8 +258,7 @@ fn run<P: AsRef<str>>(
     
     let version = match version {
         None => {
-            info!("Since no version to release was specified,\n\
-                   the check is ending now.");
+            info!("Since no version to release was specified, the check is ending now.");
             return catch.handle(true);
         },
         Some(v) => v,
@@ -275,7 +274,10 @@ fn run<P: AsRef<str>>(
             kill!("Could not find version {} in changelog", version);
         },
     };
-    
+
+    let package_name = manifest_file.name().ekill();
+    info!("Package name = {}", package_name);
+
     info!("Current version = {}", manifest_file.version().ekill());
     info!("Found version {} in changelog:\n{}", version, version_note);
     
@@ -284,12 +286,12 @@ fn run<P: AsRef<str>>(
     manifest_file.save().ekill();
     
     // make a new commit
-    info!("Creating new commit");
-    let publish_tag = format!("{}-v{}", package.as_ref(), version);
+    let publish_tag = format!("{}-v{}", package_name, version);
+    info!("Creating new commit, tagged {}", publish_tag);
     exec!([&srp, "git add {:?}", manifest_path]);
     exec!([&srp, r#"git commit -m "Publish {}""#, publish_tag]);
     exec!([&srp, "git tag {} HEAD", publish_tag]);
-    
+
     match moist {
         MoistMeter::Dry => {
             info!("Running cargo publish dry run");

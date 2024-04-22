@@ -74,12 +74,27 @@ impl ManifestFile {
                 {:?}", key));
         dep
     }
+
+    /// Get the name of this package.
+    pub fn name(&self) -> Result<String, Error> {
+        let doc = self.toml.borrow();
+        doc["package"].as_table_like()
+            .ok_or_else(|| format_err!("package is not a table-like \
+                at:\n{:?}", self.path))
+            .and_then(|table| table.get("name")
+                .ok_or_else(|| format_err!("package is missing name \
+                    at:\n{:?}", self.path)))
+            .and_then(|item| item.as_str()
+                .map(String::from)
+                .ok_or_else(|| format_err!("name is not string \
+                    at:\n{:?}", self.path)))
+    }
     
     /// Get the current version of this package.
     pub fn version(&self) -> Result<String, Error> {
         let doc = self.toml.borrow();
         doc["package"].as_table_like()
-            .ok_or_else(|| format_err!("package is not at table-like \
+            .ok_or_else(|| format_err!("package is not a table-like \
                 at:\n{:?}", self.path))
             .and_then(|table| table.get("version")
                 .ok_or_else(|| format_err!("package is missing version \
