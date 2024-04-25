@@ -137,7 +137,12 @@ fn run<P: AsRef<str>>(
                 local_changes = true;
             }
             if local_changes {
-                warn!("Uncommitted local changes copied over.")
+                warn!("Uncommitted local changes copied over.");
+                if version.is_some() {
+                    trace!("Creating commit for copied over local changes");
+                    exec!([&srp, "git add ."]);
+                    exec!([&srp, r#"git commit -m "(local changes copied over by DEET)""#])
+                }
             }
         },
         MoistMeter::Wet => {
@@ -241,13 +246,13 @@ fn run<P: AsRef<str>>(
     
     // run checks
     info!("Running cargo check");
-    exec!([&package_path, "cargo check"]);
+    exec!([&package_path, "cargo check --color always"]);
     
     info!("Running cargo test");
-    exec!([&package_path, "cargo test"]);
+    exec!([&package_path, "cargo test --color always"]);
 
     info!("Running cargo doc");
-    exec!([&package_path, "cargo doc --no-deps --document-private-items"]);
+    exec!([&package_path, "cargo doc --no-deps --document-private-items --color always"]);
     
     let changelog_path = package_path.join("CHANGELOG.md");
     info!("Reading changelog at {:?}", changelog_path);
@@ -287,7 +292,7 @@ fn run<P: AsRef<str>>(
     
     // make a new commit
     let publish_tag = format!("{}-v{}", package_name, version);
-    info!("Creating new commit, tagged {}", publish_tag);
+    info!("Creating new commit and tagging {}", publish_tag);
     exec!([&srp, "git add {:?}", manifest_path]);
     exec!([&srp, r#"git commit -m "Publish {}""#, publish_tag]);
     exec!([&srp, "git tag {} HEAD", publish_tag]);
@@ -295,17 +300,20 @@ fn run<P: AsRef<str>>(
     match moist {
         MoistMeter::Dry => {
             info!("Running cargo publish dry run");
-            exec!([package_path, "cargo publish --dry-run --allow-dirty"]);
-            
+            exec!([package_path, "cargo publish  --color always --locked --dry-run --allow-dirty"]);
+
             catch.handle(false);
         },
         MoistMeter::Wet => {
             catch.handle(false);
             
             info!("Publishing to crates.io");
-            exec!([package_path, "cargo publish"]);
+            exec!([package_path, "cargo publish --color always --locked"]);
             
-            color!(green "[ INFO  ] Successfully published, committing in git.";,);
+            color!(green "[ INFO  ] Successfully published, committing and pushing.";,);
+            manifest_file.set_version(&format!("{}-AFTER", version)).ekill();
+            exec!([&srp, "git add {:?}", manifest_path]);
+            exec!([&srp, r#"git commit -m "After-release {}""#, publish_tag]);
             exec!([&srp, "git checkout -b {}", pckg_branch]);
             exec!([&srp, "git push -u origin {0}:{0}", pckg_branch]);
             exec!([&srp, "git push -u origin {0}:{0}", publish_tag]);
